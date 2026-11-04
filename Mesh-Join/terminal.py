@@ -107,6 +107,8 @@ class TerminalWindowApp(App):
 
     def __init__(self):
         super().__init__()
+        self.db_host=""
+        self.db_port=""
         self.db_username=""
         self.db_password=""
         self.link=""
@@ -125,6 +127,14 @@ class TerminalWindowApp(App):
             )
         with Vertical(id="main-terminal"):
                 yield RichLog(id="console-log", markup=True)
+                yield Input(
+                    placeholder="Enter database host...",
+                    id="db_host"
+                )
+                yield Input(
+                    placeholder="Enter database port...",
+                    id="db_port"
+                )
                 yield Input(
                     placeholder="Enter database name...",
                     id="db_username"
@@ -152,10 +162,26 @@ class TerminalWindowApp(App):
         #this part runs immediately after the program is launched
         log=self.query_one("#console-log" , RichLog)
         log.write(f"[bold green]Near-Real Time and Periodic Data Warehouse.[/bold green].")
+        log.write(f"[bold orange]Peak Rate=80 t/s, Non-Peak=10 t/s, 1 hour=60 secs.[/bold orange].")
         log.write(f"[cyan]Enter the database credentials (DB name and Password): [/cyan]")
-        self.query_one("#db_username").focus()
+        self.query_one("#db_host").focus()
 
     # input submissions 
+
+    @on(Input.Submitted, "#db_host")
+    def host_submitted(self, event:Input.Submitted)->None:
+        self.db_host=event.value.strip()
+        log=self.query_one("#console-log", RichLog)
+        log.write("[cyan]Host received![/cyan]")
+        self.query_one("#db_port").focus()
+
+    @on(Input.Submitted, "#db_port")
+    def host_submitted(self, event:Input.Submitted)->None:
+        self.db_port=event.value.strip()
+        log=self.query_one("#console-log", RichLog)
+        log.write("[cyan]Port received![/cyan]")
+        self.query_one("#db_username").focus()
+
 
     @on(Input.Submitted, "#db_username")
     def username_submitted(self, event: Input.Submitted)->None:

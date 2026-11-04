@@ -16,13 +16,15 @@ def clean_up_file(file_link, log):
     if path.is_file():
         log.write("Data already exists..")
         data=pd.read_excel(path)
-        cleaner.cleanup(data, log)
+        data=cleaner.cleanup(data, log)
+        cleaner.partition(data,log) # actual distribution 
         return
     # else download and sent for clean up (mazdoori)
     log.write("Fetching data from online..")
     data=pd.read_excel(file_link)
     log.write("Data read. Now cleaning.")
-    cleaner.cleanup(data, log)
+    data=cleaner.cleanup(data, log)
+    cleaner.partition(data,log)
     return
 
 # then we start up the warehouse 
