@@ -176,7 +176,7 @@ class TerminalWindowApp(App):
         self.query_one("#db_port").focus()
 
     @on(Input.Submitted, "#db_port")
-    def host_submitted(self, event:Input.Submitted)->None:
+    def port_submitted(self, event:Input.Submitted)->None:
         self.db_port=event.value.strip()
         log=self.query_one("#console-log", RichLog)
         log.write("[cyan]Port received![/cyan]")
@@ -203,7 +203,7 @@ class TerminalWindowApp(App):
     def choice_submitted(self, event: Input.Submitted)->None:
         self.choice=event.value.strip()
         log=self.query_one("#console-log", RichLog)
-        if self.link=="0":
+        if self.choice=="0":
             #use existing clean data
             log.write("Using pre-cleaned data")
             log.write("[bold green]Setup Complete :) [/bold green]")
@@ -226,7 +226,7 @@ class TerminalWindowApp(App):
         self.link=event.value.strip()
         log=self.query_one("#console-log", RichLog)
         log.write("[cyan]Link received! [/cyan]")
-        main.clean_up_file(self.link, log)
+        main.clean_up_file(self.link, log, self.db_host, self.db_port, self.db_username, self.db_password)
         log.write("[bold green]Setup Complete :) [/bold green]")
         terminal=self.query_one("#terminal-input", Input)
         terminal.disabled=False

@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 # from that input we will get the link to file and clean it and then we will show the cleaned stats
-def clean_up_file(file_link, log):
+def clean_up_file(file_link, log, host, port, username, password):
 
     
     # since the data takes forever to download ill make a safety check to see if downloaded already exists 
@@ -17,17 +17,18 @@ def clean_up_file(file_link, log):
         log.write("Data already exists..")
         data=pd.read_excel(path)
         data=cleaner.cleanup(data, log)
-        cleaner.partition(data,log) # actual distribution 
+        cleaner.partition(data,log, host, port, username, password) # actual distribution 
         return
     # else download and sent for clean up (mazdoori)
     log.write("Fetching data from online..")
     data=pd.read_excel(file_link)
     log.write("Data read. Now cleaning.")
     data=cleaner.cleanup(data, log)
-    cleaner.partition(data,log)
+    cleaner.partition(data,log, host, port, username, password)
     return
 
 # then we start up the warehouse 
 
 def start_etl():
     pass
+

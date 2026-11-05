@@ -38,7 +38,7 @@ def cleanup(data, log):
 
 
 # separates data into periodic and online stream 
-def partition(data, log):
+def partition(data, log, host, port, username, password):
 
 
     data["sales_mode"] = data["transaction_id"].apply(
@@ -56,7 +56,47 @@ def partition(data, log):
     # the periodic one goes into a database
     # master data is also on disk so its in a database 
     # periodic_sales_data (staging table)
-    
+    # we need to also introduct the extra columns in periodic sales
+    # we need a total of 48 groups
+    rows_per_group=periodic_sales.shape[0]//48 
+    start=0
+    end=rows_per_group
+    periodic_sales["release_hour"]=-1
+    for i in range(0,48):
+        try:
+            if i==47:
+                periodic_sales.loc[periodic_sales.index[start:], "release_hour"]=i
+                break 
+            periodic_sales.loc[periodic_sales.index[start:], "release_hour"]=i
+            start=end
+            end=start+rows_per_group
+            log.write(f"[green]Group {i} prcoessed properly [/green]")
+        except Exception as e:
+            log.write(f"[red]Group {i} encountered an exception {e} [/red]")
+
+    periodic_sales["released"]=0
+    #basically my plan is that we make the database here 
+    #add the necessary tables here 
+    database="dw_retail_fatima"
+    db_connection=connection.connect(host, username, password, database, log)
+    if db_connection==0:
+        log.write(f"[red]Could not connect to database")
+        return -1
+    if db_connection.is_connected():
+        #create table 
+        query="create table if not exists periodic_sales_data (" \
+        "transaction_id text primary key," \
+        "customer_id text, " \
+        "product_id text, " \
+        "quantity int, " \
+        "unit_price float, " \
+        "even_time int, " \
+        "sales_mode text, " \
+        "release_hour int, " \
+        "released int default 0);"
+        #then we will make our staging table 
+
+
     # staging table has a released flag so same group is NOT extracted twice 
     # and then we also have to flag each trasaction of this data as "Periodic"
 
