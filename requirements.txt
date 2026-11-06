@@ -2,4 +2,4 @@ textual
 pandas
 pathlib
 mysql
-hashlib
+mysql-connector-python
