@@ -11,7 +11,8 @@ def stable(text, n):
 
 def create_customer_master_data(customer_data):
     #stable(text, n) as md5 
-    customer_data["gender"]="Male" if stable(customer_data["customer_id"], 2)==0 else "Female"
+    customer_data["gender"]=customer_data["customer_id"].apply(
+    lambda x: "Male" if stable(str(x), 2) == 0 else "Female")
     age_groups=["0–17", "18–25", "26–35", "36–45", "46–50", "51–55", "55+"]
     customer_data["age_group"]=customer_data["customer_id"].apply(
         lambda x: age_groups[stable(str(x) + "age", 7)]
@@ -21,14 +22,22 @@ def create_customer_master_data(customer_data):
         lambda x: occupations[stable(str(x)+"occ", 10)]
     )
     cities=["A","B","C"]
-    customer_data["city"]=customer_data[["customer_id", "country"]].apply(
-        lambda x: cities[stable(str(x["customer_id"])+customer_data["country"], 3)]
+    customer_data["city_category"]=customer_data[["customer_id", "country"]].apply(
+        lambda x: cities[stable(str(x["customer_id"]) + str(x["country"]), 3)],
+        axis=1
     )
     #if more than one country appears for the same customer then we use the country on the first cleaned transaction 
-    
+    #basically this can be achieved by simply dropping the duplicates, the earlier ones are kept and later ones are removed
+    years=["0","1","2","3","4+"]
+    customer_data["stay_in_current_city_years"]=customer_data["customer_id"].apply(
+        lambda x:years[stable(str(x)+"stay", 5)]
+    )
+    customer_data["marital_status"]=customer_data["customer_id"].apply(
+    lambda x: "Single" if stable(str(x) + "mar", 2) == 0 else "Married")
     return customer_data
 
-
+def create_product_master_data(product_data):
+    pass 
 
 # does the main clean up job
 def cleanup(data, log):
@@ -55,7 +64,7 @@ def cleanup(data, log):
     log.write(f"[bold blue]Number of transactions before cleaning: {num_transactions_before} [/bold blue]")
     log.write(f"[bold blue]Number of transactions after cleaning: {num_transactions_after} [/bold blue]")
     #dropping duplicates
-    data.drop_duplicates(subset=["transaction_id"])
+    #data.drop_duplicates(subset=["transaction_id"])
     #mapping attributes 
     data=data.rename(columns={"InvoiceNo":"transaction_id", "StockCode":"product_id", "Description":"product_name", "Quantity":"quantity", "InvoiceDate":"event_time", "UnitPrice":"unit_price", "CustomerID":"customer_id", "Country":"country"})
     log.write("Attributes mapped")
@@ -69,6 +78,7 @@ def partition(data, log, host, port, username, password):
 
     data["sales_mode"] = data["transaction_id"].apply(
     lambda x:"Online" if int(hashlib.md5(x.encode('utf-8')).hexdigest()[:8], 16) % 10 in range(7) else "Periodic")    
+    full_data=data
     periodic_sales=data[data["sales_mode"]=="Periodic"][["transaction_id", "customer_id", "product_id","quantity","unit_price","event_time","sales_mode"]]
     online_sales=data[data["sales_mode"]=="Online"][["transaction_id", "customer_id", "product_id","quantity","unit_price","event_time","sales_mode"]]
     log.write(f"[black]Online sales: {online_sales.shape[0]}[/black]")
@@ -142,18 +152,44 @@ def partition(data, log, host, port, username, password):
 
     # staging table has a released flag so same group is NOT extracted twice 
     # and then we also have to flag each trasaction of this data as "Periodic"
-    customer_data=pd.concat([online_sales["customer_id"], online_sales["customer_id"]], ignore_index=True)
-    customer_data.drop_duplicates(subset=["customer_id"])                   
-    customer_master_data=create_customer_master_data(customer_data)
-    log.write(f"[orange]Now working on master tables[/orange]")
-    query="drop table if exists customer_master_data"
-    cursor=db_connection.cursor()
-    cursor.execute(query)
-    query="drop table if exists product_master_data"
-    cursor.execute(query)
-    
+    db_connection=connection.connect(host, username, password, database, log)
+    if db_connection.is_connected():
+        full_data["customer_id"]=(full_data["customer_id"].astype(str).str.replace(r"\.0$", "", regex=True))
+        customer_data=full_data[["customer_id", "country"]]
+        customer_data=pd.DataFrame(customer_data)
+        customer_data=customer_data.drop_duplicates(subset=["customer_id"])                   
+        customer_master_data=create_customer_master_data(customer_data)
+        log.write(f"[orange]Now working on master tables[/orange]")
+        query="drop table if exists customer_master_data"
+        cursor=db_connection.cursor()
+        cursor.execute(query)
+        query="drop table if exists product_master_data"
+        cursor.execute(query)
+        query="create table if not exists customer_master_data (" \
+        "customer_id varchar(255) primary key," \
+        "gender varchar(255)," \
+        "age_group varchar(255)," \
+        "occupation varchar(255)," \
+        "city_category varchar(255)," \
+        "stay_in_current_city_years varchar (255)," \
+        "marital_status varchar(255));"
+        cursor.execute(query)
+        query="""insert into customer_master_data (customer_id, gender, age_group, occupation, city_category, stay_in_current_city_years, marital_status)
+        values (%s,%s,%s,%s,%s,%s,%s);"""
+        #log.write(f"[black]{customer_data.columns}[/black]")
+        customer_master_data=customer_master_data.drop(columns="country")
+        data=list(customer_master_data.itertuples(index=False, name=None))
+        cursor.executemany(query,data)
+        db_connection.commit()
 
-    connection.end_connection(db_connection, log, cursor)
+        #now for the product_master_data 
+        query="create table if not exists product_master_data (" \
+        "product_id varchar(255) primary key," \
+        "product_name varchar(255)," \
+        "product_category varchar(255)," \
+        "supplier_id varchar(255)," \
+        "supplier_name varchar(255));"
+        connection.end_connection(db_connection, log, cursor)
     # master data -> two tables both on disk and read onto memory
     pass
 
