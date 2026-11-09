@@ -13,6 +13,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Header, Footer, Static, Input, RichLog
 from textual import on
 import main
+import threads
 
 #code
 class TerminalWindowApp(App):
@@ -165,6 +166,8 @@ class TerminalWindowApp(App):
                     id="link",
                     disabled=True
                 )
+                yield Input(placeholder="Enter new peak value...", id="peak")
+                yield Input(placeholder="Enter new non-peak value...", id="non-peak")
                 yield Input(placeholder="Type a command and press Enter...", id="terminal-input", disabled=True)    
         yield Footer()
 
@@ -269,6 +272,26 @@ class TerminalWindowApp(App):
             self.query_one(widget_id).display = False
         terminal.focus()
 
+    @on(Input.Submitted, "#peak")
+    def on_peak_submitted(self, event: Input.Submitted) -> None:
+        self.peak = event.value.strip()
+        self.query_one("#console-log", RichLog).write(
+            f"[green]Peak value updated to {self.peak}[/green]"
+        )
+        self.query_one("#peak").display = False
+        self.query_one("#non-peak").display = True
+        self.query_one("#non-peak", Input).focus()
+
+
+    @on(Input.Submitted, "#non-peak")
+    def on_non_peak_submitted(self, event: Input.Submitted) -> None:
+        self.non_peak = event.value.strip()
+        self.query_one("#console-log", RichLog).write(
+            f"[green]Non-peak value updated to {self.non_peak}[/green]"
+        )
+        self.query_one("#non-peak").display = False
+        self.query_one("#terminal-input", Input).display = True
+        self.query_one("#terminal-input", Input).focus()
     # other commands 
     @on(Input.Submitted, "#terminal-input")
     def on_input_submitted(self, event: Input.Submitted)->None:
@@ -287,21 +310,26 @@ class TerminalWindowApp(App):
                 self.exit()            
             elif command.lower()=="clear":
                 log.clear()
-            elif command.lower()=="change":
-                log.write(f"[black]Change values for peak and non peak")
+            elif command.lower() == "change":
+                log.write("[red]Change values for peak and non-peak[/red]")
+                self.query_one("#terminal-input").display = False
+                self.query_one("#peak").display = True
+                self.query_one("#peak", Input).focus()
             elif command.lower()=="peak":
                 log.write(f"[red]Switched to peak mode[/red]")
-                self.mode="peak"
+                self.speed="peak"
             elif command.lower()=="non-peak":
                 log.write(f"[red]Switced to non-peak mode[/red]")
-                self.mode="non-peak"
+                self.speed="non-peak"
             elif command.lower()=="online":
                 log.write(f"[red]Switched to online-only mode[/red]")
-                
+                self.mode="online"
             elif command.lower()=="periodic":
                 log.write(f"[red]Switched to periodic-only mode[/red]")
+                self.mode="periodic"
             elif command.lower()=="both":
                 log.write(f"[red]Switch to using both periodic and online[/red]")
+                self.mode="both"
             elif command.lower()=="status":
                 log.write(f"[red]Showing current stats: [/red]")
                 log.write(f"[black]• Peak: {self.peak}[/black]")

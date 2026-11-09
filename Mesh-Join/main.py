@@ -1,6 +1,7 @@
 
 # here i accumulate all the code neatly together 
 import cleaner
+import threads
 import pandas as pd 
 from pathlib import Path
 
@@ -8,9 +9,7 @@ from pathlib import Path
 # from that input we will get the link to file and clean it and then we will show the cleaned stats
 def clean_up_file(file_link, log, host, port, username, password):
 
-    
     # since the data takes forever to download ill make a safety check to see if downloaded already exists 
-    
     # if already downloaded but not cleaned 
     # using relative pathing 
     path=Path(r"..\Data\Online Retail.xlsx")
@@ -28,8 +27,16 @@ def clean_up_file(file_link, log, host, port, username, password):
     cleaner.partition(data,log, host, port, username, password)
     return
 
-# then we start up the warehouse 
+#in the end of the cleanup file function we get master data in tables and csv, 
+# online data in the form of a csv
+# periodic data in a table 
 
+
+# now we start the actual nightmare
+# start threads
+# buffer and mesh join with shedding 
+# unshedding during non-peak time 
+# 
 def start_etl():
     pass
 
