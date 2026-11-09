@@ -37,7 +37,33 @@ def create_customer_master_data(customer_data):
     return customer_data
 
 def create_product_master_data(product_data):
-    pass 
+
+    #keep the longest product description, and if it is emoty we use unknown
+    #we need that max for that product id 
+    product_data["product_name"]=(
+        product_data["product_name"]
+        .fillna("")
+        .replace("", pd.NA)
+        .groupby(product_data["product_id"])
+        .transform(lambda names: names.loc[names.str.len().idxmax()] if names.notna().any() else "unknown")
+        .fillna("UNKNOWN")
+    )
+    #product category
+    product_categories=["Home Decor", "Kitchen", "Stationery", "Toys", "Seasonal Gifts", "Bags", "Jewelry", "Garden", "Party", "Other"]
+    product_data["product_category"]=product_data["product_id"].apply(
+        lambda x: product_categories[stable(str(x)+"cat", 10)]
+    )
+    #cuppliers 
+    #supplier id and supplier name 
+    supplier_ids=["SUP01", "SUP02", "SUP03", "SUP04", "SUP05"]
+    supplier_names=["Northwind Supplies", "Atlantic Gifts Ltd", "Midlands Wholesale", "Celtic Craft Co", "EuroPack Partners"]
+    product_data["supplier_id"]=product_data["product_id"].apply(
+        lambda x: supplier_ids[stable(str(x), 5)]
+    )
+    product_data["supplier_name"]=product_data["product_id"].apply(
+        lambda x: supplier_names[stable(str(x), 5)]
+    )
+    return product_data
 
 # does the main clean up job
 def cleanup(data, log):
@@ -182,6 +208,10 @@ def partition(data, log, host, port, username, password):
         cursor.executemany(query,data)
         db_connection.commit()
 
+        #now we need to deal with product data 
+        product_data=full_data[["product_id", "product_name"]]
+        #product_data=product_data.drop_duplicates(subset=["product_id"])
+        product_data=pd.DataFrame(create_product_master_data(product_data))
         #now for the product_master_data 
         query="create table if not exists product_master_data (" \
         "product_id varchar(255) primary key," \
@@ -189,6 +219,17 @@ def partition(data, log, host, port, username, password):
         "product_category varchar(255)," \
         "supplier_id varchar(255)," \
         "supplier_name varchar(255));"
+        cursor.execute(query)
+        product_data=product_data.drop_duplicates(subset=["product_id"])
+        query="""
+            insert into product_master_data(
+            product_id, product_name, product_category, supplier_id, supplier_name)
+            values (%s, %s, %s, %s, %s);
+        """
+        data=list(product_data.itertuples(index=False, name=None)) 
+        #log.write(f"[black]{product_data.columns}[/black]")
+        cursor.executemany(query, data)
+        db_connection.commit()
         connection.end_connection(db_connection, log, cursor)
     # master data -> two tables both on disk and read onto memory
     pass
