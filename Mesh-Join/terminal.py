@@ -91,6 +91,12 @@ class TerminalWindowApp(App):
         background: green;
         color: white;
     }
+    #db_host,
+    #db_port,
+    #db_username,
+    #db_password {
+        display: None;
+    }
     """
 
     #keyboard shortcuts
@@ -114,6 +120,12 @@ class TerminalWindowApp(App):
         self.link=""
         self.choice=""
 
+        #stats and things that we can change
+        self.peak=80
+        self.non_peak=10
+        self.mode="both" #default online/periodic/both 
+        self.speed="peak" #default peak/nonpeal
+
     def compose(self)->ComposeResult:
         #yields widgets to build the layout components
         yield Header(show_clock=True)
@@ -129,14 +141,14 @@ class TerminalWindowApp(App):
                 yield RichLog(id="console-log", markup=True)
                 yield Input(
                     placeholder="Enter database host...",
-                    id="db_host"
+                    id="db_host",
                 )
                 yield Input(
                     placeholder="Enter database port...",
                     id="db_port"
                 )
                 yield Input(
-                    placeholder="Enter database name...",
+                    placeholder="Enter database username...",
                     id="db_username"
                 )
 
@@ -164,6 +176,14 @@ class TerminalWindowApp(App):
         log.write(f"[bold green]Near-Real Time and Periodic Data Warehouse.[/bold green].")
         log.write(f"[bold orange]Peak Rate=80 t/s, Non-Peak=10 t/s, 1 hour=60 secs.[/bold orange].")
         log.write(f"[cyan]Enter the database credentials (DB name and Password): [/cyan]")
+        for widget_id in [
+            "#db_host",
+            "#db_port",
+            "#db_username",
+            "#db_password",
+            "#choice"
+        ]:
+            self.query_one(widget_id).display = True
         self.query_one("#db_host").focus()
 
     # input submissions 
@@ -212,6 +232,14 @@ class TerminalWindowApp(App):
             main.start_etl()
             log.write("ETL started!")
             terminal=self.query_one("#terminal-input", Input)
+            for widget_id in [
+                "#db_host",
+                "#db_port",
+                "#db_username",
+                "#db_password",
+                "#choice"
+            ]:
+                self.query_one(widget_id).display = False
             terminal.disabled=False
             terminal.focus()
         else:
@@ -228,8 +256,17 @@ class TerminalWindowApp(App):
         log.write("[cyan]Link received! [/cyan]")
         main.clean_up_file(self.link, log, self.db_host, self.db_port, self.db_username, self.db_password)
         log.write("[bold green]Setup Complete :) [/bold green]")
+        
         terminal=self.query_one("#terminal-input", Input)
         terminal.disabled=False
+        for widget_id in [
+            "#db_host",
+            "#db_port",
+            "#db_username",
+            "#db_password",
+            "#choice"
+        ]:
+            self.query_one(widget_id).display = False
         terminal.focus()
 
     # other commands 
@@ -250,6 +287,27 @@ class TerminalWindowApp(App):
                 self.exit()            
             elif command.lower()=="clear":
                 log.clear()
+            elif command.lower()=="change":
+                log.write(f"[black]Change values for peak and non peak")
+            elif command.lower()=="peak":
+                log.write(f"[red]Switched to peak mode[/red]")
+                self.mode="peak"
+            elif command.lower()=="non-peak":
+                log.write(f"[red]Switced to non-peak mode[/red]")
+                self.mode="non-peak"
+            elif command.lower()=="online":
+                log.write(f"[red]Switched to online-only mode[/red]")
+                
+            elif command.lower()=="periodic":
+                log.write(f"[red]Switched to periodic-only mode[/red]")
+            elif command.lower()=="both":
+                log.write(f"[red]Switch to using both periodic and online[/red]")
+            elif command.lower()=="status":
+                log.write(f"[red]Showing current stats: [/red]")
+                log.write(f"[black]• Peak: {self.peak}[/black]")
+                log.write(f"[black]• Non-peak: {self.non_peak}[/black]")
+                log.write(f"[black]• Mode: {self.mode}[/black]")
+                log.write(f"[black]• Speed: {self.speed}[/black]")
             else:
                 log.write("Unknown command.")
 

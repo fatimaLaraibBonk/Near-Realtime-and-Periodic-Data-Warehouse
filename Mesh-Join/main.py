@@ -12,7 +12,8 @@ def clean_up_file(file_link, log, host, port, username, password):
     # since the data takes forever to download ill make a safety check to see if downloaded already exists 
     
     # if already downloaded but not cleaned 
-    path=Path(r"C:\Users\hp\Documents\Studies\DWH\Near-Realtime-and-Periodic-Data-Warehouse\Data\Online Retail.xlsx")
+    # using relative pathing 
+    path=Path(r"..\Data\Online Retail.xlsx")
     if path.is_file():
         log.write("Data already exists..")
         data=pd.read_excel(path)

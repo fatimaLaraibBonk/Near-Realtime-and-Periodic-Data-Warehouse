@@ -14,3 +14,5 @@ select occupation from customer_master_data group by occupation;
 select city_category from customer_master_data group by city_category;
 select stay_in_current_city_years from customer_master_data group by stay_in_current_city_years;
  
+#checking for products
+select * from product_master_data;

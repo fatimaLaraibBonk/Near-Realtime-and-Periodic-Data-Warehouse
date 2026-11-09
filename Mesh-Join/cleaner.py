@@ -115,7 +115,8 @@ def partition(data, log, host, port, username, password):
     #rwmoving a stupid decimal point issue 
     online_sales["customer_id"] = (
     online_sales["customer_id"].astype(str).str.replace(r"\.0$", "", regex=True))
-    file_path_for_online=r"C:\Users\hp\Documents\Studies\DWH\Near-Realtime-and-Periodic-Data-Warehouse\Data\online_sales_stream.csv"
+    #switching to relative paths s     s                                       
+    file_path_for_online=r"..\Data\online_sales_stream.csv"
     online_sales.to_csv(file_path_for_online, index=False)
 
     # the periodic one goes into a database
@@ -135,7 +136,7 @@ def partition(data, log, host, port, username, password):
             periodic_sales.loc[periodic_sales.index[start:], "release_hour"]=i
             start=end
             end=start+rows_per_group
-            log.write(f"[green]Group {i} prcoessed properly [/green]")
+            #log.write(f"[green]Group {i} prcoessed properly [/green]")
         except Exception as e:
             log.write(f"[red]Group {i} encountered an exception {e} [/red]")
 
@@ -207,6 +208,8 @@ def partition(data, log, host, port, username, password):
         data=list(customer_master_data.itertuples(index=False, name=None))
         cursor.executemany(query,data)
         db_connection.commit()
+        file_path_for_online=r"..\Data\customer_master_data.csv"
+        customer_master_data.to_csv(file_path_for_online, index=False)
 
         #now we need to deal with product data 
         product_data=full_data[["product_id", "product_name"]]
@@ -231,7 +234,10 @@ def partition(data, log, host, port, username, password):
         cursor.executemany(query, data)
         db_connection.commit()
         connection.end_connection(db_connection, log, cursor)
+        file_path_for_online=r"..\Data\product_master_data.csv"
+        product_data.to_csv(file_path_for_online, index=False)
     # master data -> two tables both on disk and read onto memory
+    log.write(f"[green]Master tables created successfully.[/green]")
     pass
 
 
