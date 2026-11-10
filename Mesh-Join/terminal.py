@@ -18,78 +18,78 @@ import threads
 #code
 class TerminalWindowApp(App):
 
-    #theme: white terminal with orange, black, red and green
+    #theme: pretty blue terminal with sky blue, royal blue and navy accents
     CSS = """
     Screen {
-        background: white;
-        color: black;
+        background: #e3f2fd;
+        color: #0d2a4a;
     }
 
     Header {
-        background: orange;
-        color: black;
+        background: #4a90e2;
+        color: white;
     }
 
     Footer {
-        background: orange;
-        color: black;
+        background: #4a90e2;
+        color: white;
     }
 
     Footer .footer-key--key {
-        background: orange;
-        color: red;
+        background: #4a90e2;
+        color: #0a2f6b;
         text-style: bold;
     }
 
     Footer .footer-key--description {
-        background: orange;
-        color: black;
+        background: #4a90e2;
+        color: white;
     }
 
     Horizontal {
         height: auto;
-        background: white;
+        background: #e3f2fd;
     }
 
     Static {
-        background: white;
-        color: black;
+        background: #e3f2fd;
+        color: #0d2a4a;
         padding: 1 2;
     }
 
     #main-terminal {
-        background: white;
-        border: heavy black;
+        background: #e3f2fd;
+        border: heavy #1565c0;
         padding: 0 1;
     }
 
     RichLog {
-        background: white;
-        color: black;
-        border: solid green;
+        background: #f0f8ff;
+        color: #0d2a4a;
+        border: solid #2196f3;
         height: 1fr;
     }
 
     Input {
-        background: white;
-        color: black;
-        border: tall black;
+        background: #f0f8ff;
+        color: #0d2a4a;
+        border: tall #6fa8dc;
     }
 
     Input:focus {
-        border: tall orange;
+        border: tall #2196f3;
     }
 
     Input:disabled {
-        border: tall red;
+        border: tall #a0aab4;
     }
 
     Input > .input--placeholder {
-        color: red;
+        color: #7fa6cc;
     }
 
     Input > .input--cursor {
-        background: green;
+        background: #2196f3;
         color: white;
     }
     #db_host,
@@ -120,13 +120,13 @@ class TerminalWindowApp(App):
         self.db_password=""
         self.link=""
         self.choice=""
-
+        self.settings=None 
         #stats and things that we can change
         self.peak=80
         self.non_peak=10
         self.mode="both" #default online/periodic/both 
         self.speed="peak" #default peak/nonpeal
-
+        self.rate=self.peak #whaterver rate to run 
     def compose(self)->ComposeResult:
         #yields widgets to build the layout components
         yield Header(show_clock=True)
@@ -230,9 +230,10 @@ class TerminalWindowApp(App):
             #use existing clean data
             log.write("Using pre-cleaned data")
             log.write("[bold green]Setup Complete :) [/bold green]")
-
-            # quickly start up the stream and hourly periods
-            main.start_etl()
+            main_object=main.data(log, self.db_host, self.db_port, self.db_username, self.db_password)
+            # quickly start up the stream and hourly period
+            #log,host,port,username,password
+            self.settings=main.start_etl(main_object, self.rate, self.mode, self.speed)
             log.write("ETL started!")
             terminal=self.query_one("#terminal-input", Input)
             for widget_id in [
@@ -257,9 +258,11 @@ class TerminalWindowApp(App):
         self.link=event.value.strip()
         log=self.query_one("#console-log", RichLog)
         log.write("[cyan]Link received! [/cyan]")
-        main.clean_up_file(self.link, log, self.db_host, self.db_port, self.db_username, self.db_password)
+        main_object=main.clean_up_file(self.link, log, self.db_host, self.db_port, self.db_username, self.db_password)
         log.write("[bold green]Setup Complete :) [/bold green]")
-        
+        #after clean up boot up the threads
+        self.settings=main.start_etl(main_object, self.rate, self.mode, self.speed)
+        log.write("ETL started!")
         terminal=self.query_one("#terminal-input", Input)
         terminal.disabled=False
         for widget_id in [
@@ -298,38 +301,67 @@ class TerminalWindowApp(App):
         command=event.value.strip()
         log=self.query_one("#console-log", RichLog)
         input_widget=self.query_one("#terminal-input", Input)
-
         if command:
             log.write(f"[yellow]$[/yellow] {command}")
             #command handling 
 
+            #generic commands 
             if command.lower()=="help":
                 log.write("Available commands: help, quit, peak, non-peak, online, periodic, both, status, change")
             elif command.lower()=="quit":
                 log.write("Shutting down data warehouse simulation...")
+                if self.settings:
+                    self.settings.stop_event.set()
+                    self.settings.config_changed.set()
                 self.exit()            
             elif command.lower()=="clear":
                 log.clear()
+
+            #actual commands 
+            #change rates from terminal 
             elif command.lower() == "change":
                 log.write("[red]Change values for peak and non-peak[/red]")
                 self.query_one("#terminal-input").display = False
                 self.query_one("#peak").display = True
                 self.query_one("#peak", Input).focus()
+
+            #switch speeds 
             elif command.lower()=="peak":
                 log.write(f"[red]Switched to peak mode[/red]")
                 self.speed="peak"
+                self.rate=self.peak
+                if self.settings:
+                    self.settings.update_speed("peak")
+                    self.settings.update_rate(self.rate)
+
             elif command.lower()=="non-peak":
                 log.write(f"[red]Switced to non-peak mode[/red]")
                 self.speed="non-peak"
+                self.rate=self.non_peak
+                if self.settings:
+                    self.settings.update_speed("non-peak")
+                    self.settings.update_rate(self.rate)
+
+            #switch modes 
             elif command.lower()=="online":
                 log.write(f"[red]Switched to online-only mode[/red]")
                 self.mode="online"
+                if self.settings:
+                    self.settings.update_mode("online")
+
             elif command.lower()=="periodic":
                 log.write(f"[red]Switched to periodic-only mode[/red]")
                 self.mode="periodic"
+                if self.settings:
+                    self.settings.update_mode("periodic")
+
             elif command.lower()=="both":
                 log.write(f"[red]Switch to using both periodic and online[/red]")
                 self.mode="both"
+                if self.settings:
+                    self.settings.update_mode("both")
+
+            #print current status 
             elif command.lower()=="status":
                 log.write(f"[red]Showing current stats: [/red]")
                 log.write(f"[black]• Peak: {self.peak}[/black]")

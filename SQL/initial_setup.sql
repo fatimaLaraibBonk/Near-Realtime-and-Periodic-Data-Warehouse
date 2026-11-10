@@ -1,3 +1,4 @@
+#we can run this before and after the work on periodic data and master data 
 create database if not exists dw_retail_fatima;
 use dw_retail_fatima;
 

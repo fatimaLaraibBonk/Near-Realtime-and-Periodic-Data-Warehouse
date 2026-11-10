@@ -238,7 +238,6 @@ def partition(data, log, host, port, username, password):
         product_data.to_csv(file_path_for_online, index=False)
     # master data -> two tables both on disk and read onto memory
     log.write(f"[green]Master tables created successfully.[/green]")
-    pass
 
 
 # now that we have the necessary paritions of data 
