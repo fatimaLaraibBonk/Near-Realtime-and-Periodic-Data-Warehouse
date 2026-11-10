@@ -5,6 +5,8 @@ import threads
 import pandas as pd 
 from pathlib import Path
 
+
+
 class data:
     def __init__(self, log, host, port, username, password):
         self.log=log
@@ -55,6 +57,7 @@ def clean_up_file(file_link, log, host, port, username, password):
 def start_etl(main_object, rate, mode, speed):
     #main object is just used to pass arounf the necessary unchanging data
     #here we boot up the stupid threads for periodic sales and online sales 
+
     settings=threads.settings(rate, mode, speed)
     threads.start_threads(settings, main_object)
     return settings 

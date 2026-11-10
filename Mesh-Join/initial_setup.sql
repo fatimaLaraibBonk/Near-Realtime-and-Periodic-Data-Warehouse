@@ -17,3 +17,6 @@ select stay_in_current_city_years from customer_master_data group by stay_in_cur
  
 #checking for products
 select * from product_master_data;
+
+#checking shedding table
+select * from shedding_table;

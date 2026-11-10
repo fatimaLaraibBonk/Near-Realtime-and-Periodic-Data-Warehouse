@@ -3,6 +3,15 @@ import threading
 import pandas as pd
 import connection
 import time
+import mesh_join_helpers 
+
+# periodic and online threads DONE
+# shedding DONE
+# unshedding
+# meshjoin
+#consolidation
+# going to datawarehouse 
+
 
 # flow
 # threads -> buffer -> mesh join -> consolidation -> data warehouse -> finally we have queries
@@ -13,7 +22,7 @@ class settings:
         self.rate=rate
         self.mode=mode
         self.speed=speed  #im only keeping this to strictly enforce the shedding and unshedding rules
-        self.hour=5 #meaning 1 hour is 60 seconds
+        self.hour=60 #meaning 1 hour is 60 seconds
         self.lock=threading.Lock()
         self.config_changed=threading.Event() #when we change the peak and nonpeak values
         self.stop_event=threading.Event()
@@ -35,7 +44,7 @@ class settings:
 
     def update_rate(self, value):
         with self.lock:
-            self.rate=int(value)   # FIX: UI sends strings, iloc slicing needs an int
+            self.rate=int(value)  
             self.config_changed.set()
 
     def get_config(self):
@@ -57,7 +66,7 @@ class CSVReader:
 #peak and non-peak is used by online
 # online thread
 # now their job is to read the data and send it to mesh join which then enriches it
-def online_thread(Settings, main_object):
+def online_thread(Settings, main_object, stream_buff):
     reader=CSVReader("..\\Data\\online_sales_stream.csv")
     count_of_batches=0
     while not Settings.stop_event.is_set():
@@ -72,16 +81,23 @@ def online_thread(Settings, main_object):
             count_of_batches+=1
             if batch.empty:
                 break
+            #send batch to our fav stream buffer
+            batch=list(batch.itertuples(index=False, name=None))
+            left_over=stream_buff.receive_batch("online",batch, main_object)
+            if left_over:
+                reader.pointer-=len(left_over) #unread them
+                time.sleep(0.05) #let meshjoin catchup 
             Settings.config_changed.wait(timeout=1)
             if(count_of_batches==hour):
-                main_object.log.write(f"[bold green]{count_of_batches} read for online.[/bold green]")
+                main_object.log.write(f"[bold green]{count_of_batches} number of groups read for online.[/bold green]")
                 count_of_batches=0
+                #This was just to like count or stuff 
         else:
             Settings.config_changed.wait()
 
 
 # periodic threads
-def periodic_thread(Settings, main_object):
+def periodic_thread(Settings, main_object, stream_buff):
     #it sends the data every 60 seconds, i.e every hour
     release_hour=0 #so we start releasing from zero and make our way up
     #connection
@@ -106,15 +122,19 @@ def periodic_thread(Settings, main_object):
                     Settings.config_changed.wait(timeout=remaining)
                     continue
                 #it reads an entire group every 60 seconds
-                query=f"select * from periodic_sales_data where release_hour={release_hour} AND released=0"
-                cursor.execute(query)
-                batch=cursor.fetchall()
-                query=f"update periodic_sales_data set released=1 where release_hour={release_hour} AND released=0"
-                cursor.execute(query)
-                db_connection.commit()
-                release_hour+=1
-                main_object.log.write(f"[bold green]Group {release_hour} read.[/bold green]")
-                next_release=time.monotonic()+hour
+                try:
+                    query=f"select * from periodic_sales_data where release_hour=%s AND released=0"
+                    cursor.execute(query, (release_hour,))
+                    batch=cursor.fetchall() 
+                    stream_buff.receive_batch("periodic", batch, main_object)
+                    query=f"update periodic_sales_data set released=1 where release_hour=%s AND released=0"
+                    cursor.execute(query, (release_hour,))
+                    db_connection.commit()
+                    release_hour+=1
+                    main_object.log.write(f"[bold green]Group {release_hour} read.[/bold green]")
+                    next_release=time.monotonic()+hour
+                except Exception as e :
+                    main_object.log.write(f"Error while fetching perioidic sales {e}")
             else:
                 paused=True
                 Settings.config_changed.wait()
@@ -124,10 +144,22 @@ def periodic_thread(Settings, main_object):
         main_object.log.write(f"[bold red]DB connection not successful for periodic thread[/bold red]")
 
 
-#stream buffer 
+#mesh join 
+#flow 
+"""
+1. take a chunk from the stream buffer
+2. put that chunk in the hash table 
+3. record the chunk in the queue
+4. read the next master data page
+5. probe
+6. check oldest chunk 
+"""
 
 def start_threads(settings, main_object):
-    t1=threading.Thread(target=online_thread, args=(settings, main_object), daemon=True)
-    t2=threading.Thread(target=periodic_thread, args=(settings, main_object), daemon=True)
+    #making sure our shedding table is already prepared 
+    mesh_join_helpers.make_shedding_table(main_object)
+    stream_buff=mesh_join_helpers.stream_buffer()
+    t1=threading.Thread(target=online_thread, args=(settings, main_object, stream_buff), daemon=True)
+    t2=threading.Thread(target=periodic_thread, args=(settings, main_object, stream_buff), daemon=True)
     t1.start()
     t2.start()
