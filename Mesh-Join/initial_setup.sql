@@ -20,3 +20,8 @@ select * from product_master_data;
 
 #checking shedding table
 select * from shedding_table;
+
+select * from fact_sales;
+select * from dim_store;
+select * from dim_customer;
+select * from dim_product;
