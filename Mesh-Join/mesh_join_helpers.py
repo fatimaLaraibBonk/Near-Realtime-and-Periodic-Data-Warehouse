@@ -2,7 +2,7 @@
 #so basically hash, queue, 
 import connection 
 import threading
-
+from datetime import datetime
 class stream_buffer:
     def __init__(self):
         self.buffer_size=1000
@@ -31,7 +31,7 @@ class stream_buffer:
     def space_available(self):
         return self.buffer_size-len(self.buffer)
     #this took me so much time im so bad
-    def receive_batch(self, source, batch, main_object):
+    def receive_batch(self, source, batch, main_object, shed_mode="Unknown"):
         #this function receives the batches of data 
         #i like really dont wanna code this bro im scared 
         #if theres space in the buffer we put the rows
@@ -91,12 +91,13 @@ class stream_buffer:
                     if db_connection.is_connected():
                         query="""
                             insert into shedding_table(
-                            transaction_id, customer_id, product_id, quantity, unit_price, event_time, sales_mode,release_hour, released)
-                            values (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+                            transaction_id, customer_id, product_id, quantity, unit_price, event_time, sales_mode,release_hour, released, shed_time, shed_mode)
+                            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
                         """
+                        shed_time=datetime.now()
                         rows_to_write = [
                             (r[0], r[1], r[2], r[3], r[4], r[5], r[6],
-                            r[7] if len(r) > 7 else None, 0)
+                            r[7] if len(r) > 7 else None, 0, shed_time, shed_mode)
                             for r in shed_rows
                         ]
                         cursor=db_connection.cursor()
@@ -150,6 +151,8 @@ def make_shedding_table(main_object):
                 "event_time timestamp, " \
                 "sales_mode text, " \
                 "release_hour int, " \
-                "released int default 0);"
+                "released int default 0," \
+                "shed_time timestamp," \
+                "shed_mode varchar(10))" #shed mode means was it shed during peak or non-peak 
         cursor.execute(query)
         connection.end_connection(db_connection, main_object.log, cursor)

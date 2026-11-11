@@ -3,3 +3,5 @@ pandas
 pathlib
 mysql
 mysql-connector-python
+threading
+datetime

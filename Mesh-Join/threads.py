@@ -7,6 +7,7 @@ import mesh_join_helpers
 from collections import deque 
 import math
 from collections import defaultdict, deque
+import hashlib 
 # periodic and online threads DONE
 # shedding DONE
 # unshedding
@@ -84,7 +85,7 @@ def online_thread(Settings, main_object, stream_buff):
                 break
             #send batch to our fav stream buffer
             batch=list(batch.itertuples(index=False, name=None))
-            left_over=stream_buff.receive_batch("online",batch, main_object)
+            left_over=stream_buff.receive_batch("online",batch, main_object, speed)
             if left_over:
                 reader.pointer-=len(left_over) #unread them
                 time.sleep(0.05) #let meshjoin catchup 
@@ -127,7 +128,7 @@ def periodic_thread(Settings, main_object, stream_buff):
                     query=f"select * from periodic_sales_data where release_hour=%s AND released=0"
                     cursor.execute(query, (release_hour,))
                     batch=cursor.fetchall() 
-                    stream_buff.receive_batch("periodic", batch, main_object)
+                    stream_buff.receive_batch("periodic", batch, main_object, speed)
                     query=f"update periodic_sales_data set released=1 where release_hour=%s AND released=0"
                     cursor.execute(query, (release_hour,))
                     db_connection.commit()
@@ -155,12 +156,16 @@ def periodic_thread(Settings, main_object, stream_buff):
 5. probe
 6. check oldest chunk 
 """
+
+
+#int(hashlib.md5(x.encode('utf-8')).hexdigest()[:8], 16) % 10
 #flow 
 #chunks->master data->consolidation->data warehouse 
 def meshjoin_thread(Settings, main_object, stream_buff):
     #this function removes from stream buff instead of adding into it 
     H=defaultdict(list) #hash tabel
     queue=deque()
+    known={"cust":set(), "prod":set(), "time":set()} #keeping track of what ids we already know 
     db_connection=connection.connect(main_object.host, main_object.username, main_object.password, "dw_retail_fatima", main_object.log)
     if db_connection.is_connected():
         #tables
@@ -174,10 +179,12 @@ def meshjoin_thread(Settings, main_object, stream_buff):
         customers_pages=math.ceil(count_customers/500)
         product_pages=math.ceil(count_product/500)
         N_ITER=max(customers_pages, product_pages)#max (customer, product_pages) 
+        stores=[("London Bridge" ,"London"),("Manchester Arndale", "Manchester"),("Birmingham Bullring", "Birmingham"),("Edinburgh Princes", "Edinburgh")]
         #we also need a queue 
         cust_page=0
         prod_page=0
         while not Settings.stop_event.is_set():
+            mode, rate, hour, speed = Settings.get_config()
             chunk=stream_buff.take_chunk(500)
             txns=[]
             for row in chunk:
@@ -233,23 +240,96 @@ def meshjoin_thread(Settings, main_object, stream_buff):
                 #next step is consolidation :3
                 #consolidate(done["rows"]) -> revenue, dimension keys, fact table
                 #once conslidated they will go into our warehouse 
-                
+
                 #for each transaction we find the sales 
                 #dimensions and fact tables 
                 #t["cust"]->customer dimension 
                 #t["prod"]->product dimension
                 #t["prod"]->also has supplier data 
-
-
-
-
-
+                #we also need to fill in the dimensiomn tables
+                #if the current key is not present in the dimension table then we have to insert it there as well 
+                #what goes in the data warehouse
+                #facts, customers, stores, products, time, supplier
+                #store 
+                #if transaction is online store it uses "Online"
+                consolidate(done["rows"], db_connection, cursor, main_object, speed, known)
             if not chunk:
                 time.sleep(0.05) #stream is empty but keep looping so old chunks can finish 
         #once finished end the connection
         connection.end_connection(db_connection, main_object.log, cursor)
     else:
         main_object.log.write(f"Database failed to load for mesh join")  
+
+
+def consolidate(done_rows, db_connection, cursor, main_object, processing_mode, known):
+    #here we actually do the consolidation 
+    cust_new, prod_new, time_new, facts={},{},{},{}
+    for t in done_rows:
+        row=t["row"]
+        if t["cust"] is None or t["prod"] is None:
+            #theyre just missing this shi 
+            continue
+        txn_id,cust_id, prod_id = str(row[0]), str(row[1]), str(row[2])
+        qty, price, sales_mode = int(row[3]), float(row[4]), row[6]
+
+        #store 
+        if sales_mode=="Online":
+            store_id=1
+        else:
+            store_id=2+((int(hashlib.md5(txn_id.encode("utf-8")).hexdigest()[:8], 16) % 4))
+
+        #now time 
+        #time (event_time may be a string from the csv or a datetime from MySQL)
+        ts=pd.Timestamp(row[5])
+        time_key=int(ts.strftime("%Y%m%d%H"))
+
+        supplier_id=t["prod"][3]
+
+        #collect only dimension rows we havent inserted before or like havent seen before
+        if cust_id not in known["cust"]:
+            cust_new[cust_id]=tuple(t["cust"][:7])
+        if prod_id not in known["prod"]:
+            prod_new[prod_id] = (t["prod"][0], t["prod"][1], t["prod"][2])
+        #time is our least prepared dimension as of now 
+        #so we also need to...prepare it lol
+        if time_key not in known["time"]:
+            m = ts.month
+            season = ("Winter" if m in (12, 1, 2) else "Spring" if m in (3, 4, 5)
+                      else "Summer" if m in (6, 7, 8) else "Fall")
+            time_new[time_key] = (time_key, ts.date(), ts.hour, ts.day, m, (m - 1)//3 + 1,
+                                  ts.year, ts.day_name(),
+                                  "Weekend" if ts.dayofweek >= 5 else "Weekday",
+                                  season, 1 if m <= 6 else 2)
+        revenue=round(qty * price, 2)
+        facts.append((txn_id, cust_id, prod_id, supplier_id, str(store_id),
+                      time_key, qty, revenue, sales_mode, processing_mode))
+
+        #now that our row is ready we cna append it heheheheeh
+        try:
+            if cust_new:
+                cursor.executemany("""insert ignore into dim_customer
+                    (customer_id, gender, age_group, occupation, city_category,
+                    stay_in_current_city_years, marital_status)
+                    values (%s,%s,%s,%s,%s,%s,%s)""", list(cust_new.values()))
+            if prod_new:
+                cursor.executemany("""insert ignore into dim_product
+                    (product_id, product_name, product_category)
+                    values (%s,%s,%s)""", list(prod_new.values()))
+            if time_new:
+                cursor.executemany("""insert ignore into dim_time
+                    (time_key, full_date, hour, day_of_month, month, quarter, year,
+                    day_of_week, weekday_weekend, season, half_year)
+                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", list(time_new.values()))
+            if facts:
+                cursor.executemany("""insert into fact_sales
+                    (transaction_id, customer_id, product_id, supplier_id, store_id,
+                    time_key, quantity, revenue, sales_mode, processing_mode)
+                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", facts)
+            db_connection.commit()                          # dimensions + facts together
+            known["cust"].update(cust_new); known["prod"].update(prod_new); known["time"].update(time_new)
+        except Exception as e:
+            db_connection.rollback()
+            main_object.log.write(f"Consolidation failed for {len(facts)} facts: {e}")
 def start_threads(settings, main_object):
     #making sure our shedding table is already prepared 
     mesh_join_helpers.make_shedding_table(main_object)

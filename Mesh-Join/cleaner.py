@@ -6,7 +6,7 @@ import hashlib
 import connection 
 
 def stable(text, n):
-    hash_value = hashlib.md5(str(text).encode('utf-8')).hexdigest()
+    hash_value = hashlib.md5(str(text).encode('utf-8')).hexdigest()[:8]
     return int(hash_value, 16) % n
 
 def create_customer_master_data(customer_data):
@@ -45,7 +45,7 @@ def create_product_master_data(product_data):
         .fillna("")
         .replace("", pd.NA)
         .groupby(product_data["product_id"])
-        .transform(lambda names: names.loc[names.str.len().idxmax()] if names.notna().any() else "unknown")
+        .transform(lambda names: names.loc[names.str.len().idxmax()] if names.notna().any() else "UNKNOWN")
         .fillna("UNKNOWN")
     )
     #product category
@@ -184,7 +184,8 @@ def partition(data, log, host, port, username, password):
         full_data["customer_id"]=(full_data["customer_id"].astype(str).str.replace(r"\.0$", "", regex=True))
         customer_data=full_data[["customer_id", "country"]]
         customer_data=pd.DataFrame(customer_data)
-        customer_data=customer_data.drop_duplicates(subset=["customer_id"])                   
+        customer_data=full_data[["customer_id", "country", "event_time"]].sort_values("event_time", kind="stable") 
+        customer_data=customer_data.drop_duplicates(subset=["customer_id"])[["customer_id", "country"]]                  
         customer_master_data=create_customer_master_data(customer_data)
         log.write(f"[orange]Now working on master tables[/orange]")
         query="drop table if exists customer_master_data"

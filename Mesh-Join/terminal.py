@@ -119,7 +119,6 @@ class TerminalWindowApp(App):
         self.db_username=""
         self.db_password=""
         self.link=""
-        self.choice=""
         self.settings=None 
         #stats and things that we can change
         self.peak=80
@@ -158,10 +157,6 @@ class TerminalWindowApp(App):
                     id="db_password"
                 )
                 yield Input(
-                    placeholder="Enter data choice...",
-                    id="choice"
-                )
-                yield Input(
                     placeholder="Enter online data source URL...",
                     id="link",
                     disabled=True
@@ -183,8 +178,7 @@ class TerminalWindowApp(App):
             "#db_host",
             "#db_port",
             "#db_username",
-            "#db_password",
-            "#choice"
+            "#db_password"
         ]:
             self.query_one(widget_id).display = True
         self.query_one("#db_host").focus()
@@ -218,40 +212,10 @@ class TerminalWindowApp(App):
         self.db_password=event.value.strip()
         log=self.query_one("#console-log", RichLog)
         log.write("[cyan]Password received! [/cyan]")
-        log.write("[black]Would you like to use pre-cleaned data or start from scratch (download and clean)? 0 for pre-cleaned, 1 for scratch.")
-        self.query_one("#choice").focus()
-
-
-    @on(Input.Submitted, "#choice")
-    def choice_submitted(self, event: Input.Submitted)->None:
-        self.choice=event.value.strip()
-        log=self.query_one("#console-log", RichLog)
-        if self.choice=="0":
-            #use existing clean data
-            log.write("Using pre-cleaned data")
-            log.write("[bold green]Setup Complete :) [/bold green]")
-            main_object=main.data(log, self.db_host, self.db_port, self.db_username, self.db_password)
-            # quickly start up the stream and hourly period
-            #log,host,port,username,password
-            self.settings=main.start_etl(main_object, self.rate, self.mode, self.speed)
-            log.write("ETL started!")
-            terminal=self.query_one("#terminal-input", Input)
-            for widget_id in [
-                "#db_host",
-                "#db_port",
-                "#db_username",
-                "#db_password",
-                "#choice"
-            ]:
-                self.query_one(widget_id).display = False
-            terminal.disabled=False
-            terminal.focus()
-        else:
-            #so 1 will make us use the link
-            log.write("[cyan]Enter the link please: [/cyan]")
-            answer=self.query_one("#link", Input)
-            answer.disabled=False
-            answer.focus()
+        log.write("[cyan]Enter the link please: [/cyan]")
+        answer=self.query_one("#link", Input)
+        answer.disabled=False
+        answer.focus()
 
     @on(Input.Submitted, "#link")
     def link_submitted(self, event: Input.Submitted)->None:
@@ -269,8 +233,7 @@ class TerminalWindowApp(App):
             "#db_host",
             "#db_port",
             "#db_username",
-            "#db_password",
-            "#choice"
+            "#db_password"
         ]:
             self.query_one(widget_id).display = False
         terminal.focus()
