@@ -12,7 +12,14 @@ class stream_buffer:
         self.stats={"online_in":0, "periodic_in":0, "evicted":0, "overflowed":0, "backpressure":0, "shed_written":0}
     #now this buffer stores transactions and feeds them into mesh join 
 
-
+    def take_chunk(self,w=500):
+        with self.cond:
+            chunk=self.buffer[:w]
+            del self.buffer[:w] #gettign rid of that chunk as well
+            self.n_online-=min(w, self.n_online) #setting online bak 
+            self.cond.notify_all()
+        return chunk 
+    
     #logic 
     #stream buffer is an array or a list of transactions
     #i will keep the list alwaus sorts as [online trasactions ---- periodic transactions]
