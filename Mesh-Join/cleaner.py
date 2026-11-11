@@ -124,6 +124,7 @@ def partition(data, log, host, port, username, password):
     # periodic_sales_data (staging table)
     # we need to also introduct the extra columns in periodic sales
     # we need a total of 48 groups
+    periodic_sales=periodic_sales.sort_values("event_time", kind="stable").reset_index(drop=True)
     rows_per_group=periodic_sales.shape[0]//48 
     start=0
     end=rows_per_group

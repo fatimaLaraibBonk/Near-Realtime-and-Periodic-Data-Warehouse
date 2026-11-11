@@ -246,6 +246,9 @@ class TerminalWindowApp(App):
         )
         self.query_one("#peak").display = False
         self.query_one("#non-peak").display = True
+        if self.settings and self.speed == "peak":
+            self.settings.update_rate(int(self.peak))
+        self.settings.config_changed.set()
         self.query_one("#non-peak", Input).focus()
 
 
@@ -257,7 +260,12 @@ class TerminalWindowApp(App):
         )
         self.query_one("#non-peak").display = False
         self.query_one("#terminal-input", Input).display = True
+        if self.settings and self.speed == "non-peak":
+            self.settings.update_rate(int(self.non_peak))
+        self.settings.config_changed.set()
         self.query_one("#terminal-input", Input).focus()
+
+
     # other commands 
     @on(Input.Submitted, "#terminal-input")
     def on_input_submitted(self, event: Input.Submitted)->None:

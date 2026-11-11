@@ -25,7 +25,7 @@ class settings:
         self.rate=rate
         self.mode=mode
         self.speed=speed  #im only keeping this to strictly enforce the shedding and unshedding rules
-        self.hour=60 #meaning 1 hour is 60 seconds
+        self.hour=1 #meaning 1 hour is 60 seconds
         self.lock=threading.Lock()
         self.config_changed=threading.Event() #when we change the peak and nonpeak values
         self.stop_event=threading.Event()
@@ -82,6 +82,7 @@ def online_thread(Settings, main_object, stream_buff):
             #main_object.log.write(f"[black]Read {len(batch)} number of rows[/black]")
             count_of_batches+=1
             if batch.empty:
+                main_object.log.write(f"[bold black]Reached the end of online file.[/bold black]")
                 break
             #send batch to our fav stream buffer
             batch=list(batch.itertuples(index=False, name=None))
@@ -91,7 +92,7 @@ def online_thread(Settings, main_object, stream_buff):
                 time.sleep(0.05) #let meshjoin catchup 
             Settings.config_changed.wait(timeout=1)
             if(count_of_batches==hour):
-                main_object.log.write(f"[bold green]{count_of_batches} number of groups read for online.[/bold green]")
+                main_object.log.write(f"[bold green]{count_of_batches*rate} rows read for online.[/bold green]")
                 count_of_batches=0
                 #This was just to like count or stuff 
         else:
@@ -113,6 +114,8 @@ def periodic_thread(Settings, main_object, stream_buff):
             Settings.config_changed.clear()
             mode, rate, hour, speed = Settings.get_config()
             if mode in ("both", "periodic"):
+                if(release_hour==48):
+                    break
                 if paused:
                     #we just switched back from online-only, so start a fresh hour
                     next_release=time.monotonic()+hour
@@ -142,6 +145,7 @@ def periodic_thread(Settings, main_object, stream_buff):
                 Settings.config_changed.wait()
         cursor.close()
         db_connection.close()
+        main_object.log.write(f"[bold black]Reached the end of periodic groups[/bold black]")
     else:
         main_object.log.write(f"[bold red]DB connection not successful for periodic thread[/bold red]")
 
@@ -162,107 +166,138 @@ def periodic_thread(Settings, main_object, stream_buff):
 #flow 
 #chunks->master data->consolidation->data warehouse 
 def meshjoin_thread(Settings, main_object, stream_buff):
-    try:
-        #this function removes from stream buff instead of adding into it 
-        H=defaultdict(list) #hash tabel
-        queue=deque()
-        known={"cust":set(), "prod":set(), "time":set()} #keeping track of what ids we already know 
-        db_connection=connection.connect(main_object.host, main_object.username, main_object.password, "dw_retail_fatima", main_object.log)
-        if db_connection.is_connected():
-            #tables
-            query="select count(*) from customer_master_data"
-            cursor=db_connection.cursor()
-            cursor.execute(query)
-            count_customers=cursor.fetchone()[0]
-            query="select count(*) from product_master_data"
-            cursor.execute(query)
-            count_product=cursor.fetchone()[0]
-            customers_pages=math.ceil(count_customers/500)
-            product_pages=math.ceil(count_product/500)
-            N_ITER=max(customers_pages, product_pages)#max (customer, product_pages) 
-            stores=[("London Bridge" ,"London"),("Manchester Arndale", "Manchester"),("Birmingham Bullring", "Birmingham"),("Edinburgh Princes", "Edinburgh")]
-            #we also need a queue 
-            cust_page=0
-            prod_page=0
-            while not Settings.stop_event.is_set():
-                mode, rate, hour, speed = Settings.get_config()
-                chunk=stream_buff.take_chunk(500)
-                txns=[]
-                for row in chunk:
-                    #now for each row i will put it in the hash table 
-                    #im so hangry
-                    #tuples cant be changed so wrap each row in a dict to attach cust and prod later
-                    t={"row":row, "cust":None, "prod":None}
-                    H[("C", str(row[1]))].append(t)
-                    H[("P", str(row[2]))].append(t)
-                    txns.append(t)
-                #that chunk has been put in hash now we put this chunck 
-                if txns:
-                    queue.append({"rows":txns, "iters":0})
-                #nothing in the stream and nothing in the queue, no point reading master data
-                if not queue:
-                    time.sleep(0.05)
-                    continue
-                #so to load these master tables we need the connection
-                #but now we need offset to get 500-500-500 like
-                #ok now we load in the 500 rows tables
-                query="select * from customer_master_data order by customer_id limit 500 offset %s"
-                #nowe we read the next customer page 
-                cursor.execute(query, (cust_page*500,))
-                #now we will fetch that data and then use that data to join 
-                customers_data=cursor.fetchall()
-                #and the next product page 
-                query="select * from product_master_data order by product_id limit 500 offset %s"
-                cursor.execute(query, (prod_page*500,))
-                product_data=cursor.fetchall()
-                #THE JOIN, every master row looks itself up in H and gets attached to the transactions it matches
-                for m in customers_data:
-                    for t in H.get(("C", str(m[0])), ()):
-                        t["cust"]=m
-                for m in product_data:
-                    for t in H.get(("P", str(m[0])), ()):
-                        t["prod"]=m
-                #move to the next or wrap arounf 
-                cust_page=(cust_page+1)%customers_pages
-                prod_page=(prod_page+1)%product_pages
-                #then we incrmenet or age 
-                for c in queue:
-                    c["iters"]+=1
-                #queue is first in first out 
-                if queue and queue[0]["iters"]>=N_ITER:
-                    done=queue.popleft()
-                    for t in done["rows"]:
-                        H[("C", str(t["row"][1]))].remove(t)
-                        H[("P", str(t["row"][2]))].remove(t)
-                        #we also need to conslidate these rows
-                        #if this prints the id is missing from master data or the key types dont match
-                        if t["cust"] is None or t["prod"] is None:
-                            main_object.log.write(f"Missing master match for transaction {t['row'][0]}")
-                    #next step is consolidation :3
-                    #consolidate(done["rows"]) -> revenue, dimension keys, fact table
-                    #once conslidated they will go into our warehouse 
+    #this function removes from stream buff instead of adding into it 
+    H=defaultdict(list) #hash tabel
+    queue=deque()
+    known={"cust":set(), "prod":set(), "time":set()} #keeping track of what ids we already know 
+    periodic_hold=[] #finished periodic transactions waiting for the hourly load
+    db_connection=connection.connect(main_object.host, main_object.username, main_object.password, "dw_retail_fatima", main_object.log)
+    if db_connection.is_connected():
+        #tables
+        query="select count(*) from customer_master_data"
+        cursor=db_connection.cursor()
+        cursor.execute(query)
+        count_customers=cursor.fetchone()[0]
+        query="select count(*) from product_master_data"
+        cursor.execute(query)
+        count_product=cursor.fetchone()[0]
+        customers_pages=math.ceil(count_customers/500)
+        product_pages=math.ceil(count_product/500)
+        N_ITER=max(customers_pages, product_pages)#max (customer, product_pages) 
+        stores=[("London Bridge" ,"London"),("Manchester Arndale", "Manchester"),("Birmingham Bullring", "Birmingham"),("Edinburgh Princes", "Edinburgh")]
+        #we also need a queue 
+        cust_page=0
+        prod_page=0
+        next_flush=time.monotonic()+Settings.get_config()[2] #when the next hourly periodic load is due
+        while not Settings.stop_event.is_set():
+            mode, rate, hour, speed = Settings.get_config()
+            #hourly load of the held periodic transactions (this check is at the top so no continue can skip it)
+            if time.monotonic()>=next_flush:
+                if periodic_hold:
+                    consolidate(periodic_hold, db_connection, cursor, main_object, speed, known)
+                    main_object.log.write(f"[HOURLY LOAD] {len(periodic_hold)} periodic transactions loaded into the DW")
+                    periodic_hold=[]
+                next_flush=time.monotonic()+hour
+            chunk=stream_buff.take_chunk(500)
 
-                    #for each transaction we find the sales 
-                    #dimensions and fact tables 
-                    #t["cust"]->customer dimension 
-                    #t["prod"]->product dimension
-                    #t["prod"]->also has supplier data 
-                    #we also need to fill in the dimensiomn tables
-                    #if the current key is not present in the dimension table then we have to insert it there as well 
-                    #what goes in the data warehouse
-                    #facts, customers, stores, products, time, supplier
-                    #store 
-                    #if transaction is online store it uses "Online"
-                    consolidate(done["rows"], db_connection, cursor, main_object, speed, known)
-                if not chunk:
-                    time.sleep(0.05) #stream is empty but keep looping so old chunks can finish 
-            #once finished end the connection
-            connection.end_connection(db_connection, main_object.log, cursor)
-        else:
-            main_object.log.write(f"Database failed to load for mesh join")  
-    except Exception:
-        main_object.log.write("MESHJOIN THREAD CRASHED:\n" + traceback.format_exc())
-        
+            #UNSHEDDING 
+            #unshedding: shed rows only fill the unused slots of the chunk, so online and periodic always go first
+            #i was really confused by if u want or not want unshedding for peak or nah 
+
+            spare=500-len(chunk)
+            if spare>0 and mode!="online": #periodic work is paused in online-only mode 
+                allowance=spare if speed=="non-peak" else spare//4 #non-peak drains at full rate, peak at a reduced rate
+                #the //4 is only done to slow down the drain for the peak mode
+                #so for peak we only drain quarter 
+                #to completely stop shedding for peak 
+            #if spare>0 and mode!="online" and speed=="non-peak":
+                #chunk=chunk+stream_buff.read_shed_rows(db_connection, spare, main_object, speed)
+                if allowance>0:
+                    chunk=chunk+stream_buff.read_shed_rows(db_connection, allowance, main_object, speed)
+
+
+            txns=[]
+            for row in chunk:
+                #now for each row i will put it in the hash table 
+                #im so hangry
+                #tuples cant be changed so wrap each row in a dict to attach cust and prod later
+                t={"row":row, "cust":None, "prod":None}
+                H[("C", str(row[1]))].append(t)
+                H[("P", str(row[2]))].append(t)
+                txns.append(t)
+            #that chunk has been put in hash now we put this chunck 
+            if txns:
+                queue.append({"rows":txns, "iters":0})
+            #nothing in the stream and nothing in the queue, no point reading master data
+            if not queue:
+                time.sleep(0.05)
+                continue
+            #so to load these master tables we need the connection
+            #but now we need offset to get 500-500-500 like
+            #ok now we load in the 500 rows tables
+            query="select * from customer_master_data order by customer_id limit 500 offset %s"
+            #nowe we read the next customer page 
+            cursor.execute(query, (cust_page*500,))
+            #now we will fetch that data and then use that data to join 
+            customers_data=cursor.fetchall()
+            #and the next product page 
+            query="select * from product_master_data order by product_id limit 500 offset %s"
+            cursor.execute(query, (prod_page*500,))
+            product_data=cursor.fetchall()
+            #THE JOIN, every master row looks itself up in H and gets attached to the transactions it matches
+            for m in customers_data:
+                for t in H.get(("C", str(m[0])), ()):
+                    t["cust"]=m
+            for m in product_data:
+                for t in H.get(("P", str(m[0])), ()):
+                    t["prod"]=m
+            #move to the next or wrap arounf 
+            cust_page=(cust_page+1)%customers_pages
+            prod_page=(prod_page+1)%product_pages
+            #then we incrmenet or age 
+            for c in queue:
+                c["iters"]+=1
+            #queue is first in first out 
+            if queue and queue[0]["iters"]>=N_ITER:
+                done=queue.popleft()
+                for t in done["rows"]:
+                    H[("C", str(t["row"][1]))].remove(t)
+                    H[("P", str(t["row"][2]))].remove(t)
+                    #we also need to conslidate these rows
+                    #if this prints the id is missing from master data or the key types dont match
+                    if t["cust"] is None or t["prod"] is None:
+                        main_object.log.write(f"Missing master match for transaction {t['row'][0]}")
+                #next step is consolidation :3
+                #consolidate(done["rows"]) -> revenue, dimension keys, fact table
+                #once conslidated they will go into our warehouse 
+
+                #for each transaction we find the sales 
+                #dimensions and fact tables 
+                #t["cust"]->customer dimension 
+                #t["prod"]->product dimension
+                #t["prod"]->also has supplier data 
+                #we also need to fill in the dimensiomn tables
+                #if the current key is not present in the dimension table then we have to insert it there as well 
+                #what goes in the data warehouse
+                #facts, customers, stores, products, time, supplier
+                #store 
+                #if transaction is online store it uses "Online"
+                #consolidate(done["rows"], db_connection, cursor, main_object, speed, known) #REPLACED by the online/periodic split below
+                online_rows=[t for t in done["rows"] if t["row"][6]=="Online"] #online loads right away
+                periodic_hold.extend(t for t in done["rows"] if t["row"][6]!="Online") #periodic waits for the hourly load
+                if online_rows:
+                    consolidate(online_rows, db_connection, cursor, main_object, speed, known)
+            if not chunk:
+                time.sleep(0.05) #stream is empty but keep looping so old chunks can finish 
+        #final flush so held periodic transactions are not lost on quit
+        if periodic_hold:
+            consolidate(periodic_hold, db_connection, cursor, main_object, Settings.get_config()[3], known)
+            main_object.log.write(f"[FINAL LOAD] {len(periodic_hold)} periodic transactions loaded on quit")
+        #once finished end the connection
+        connection.end_connection(db_connection, main_object.log, cursor)
+    else:
+        main_object.log.write(f"Database failed to load for mesh join")
+
 def consolidate(done_rows, db_connection, cursor, main_object, processing_mode, known):
     #here we actually do the consolidation 
     cust_new, prod_new, time_new, facts={},{},{},[]

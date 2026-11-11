@@ -112,18 +112,42 @@ class stream_buffer:
         accounted=inserted+overflowed+len(leftover)
         ok="OK" if accounted==batch_size else f"MISMATCH ({accounted}/{batch_size})"
         if source=="periodic" or shed_rows or leftover:
-            """
             main_object.log.write(
-                f"[{source.upper()}] batch={batch_size} in={inserted} "
-                f"evicted={evicted} overflowed={overflowed} backpressure={len(leftover)} "
+                #f"[{source.upper()}] batch={batch_size} in={inserted} "
+                #f"evicted={evicted} overflowed={overflowed} backpressure={len(leftover)} "
                 f"shed_written={written} | buffer={buf_len}/{self.buffer_size} "
-                f"(online={n_on}, periodic={buf_len-n_on}) | "
-                f"TOTAL shed={self.stats['evicted']+self.stats['overflowed']} "
-                f"TOTAL written={self.stats['shed_written']} | check={ok}"
+                #f"(online={n_on}, periodic={buf_len-n_on}) | "
+                #f"[bold red]TOTAL shed={self.stats['evicted']+self.stats['overflowed']}[/bold red]"
+                #f"TOTAL written={self.stats['shed_written']} | check={ok}"
             )
-            """
+            
         return leftover
 
+    def read_shed_rows(self, db_connection, n, main_object, speed):
+        #unshedding 
+        #i wrote my complete understanding in the report 
+        try:
+            cursor=db_connection.cursor()
+            cursor.execute("""select shed_id, transaction_id, customer_id, product_id, quantity,
+                    unit_price, event_time, sales_mode, release_hour
+                    from shedding_table where released=0 order by shed_id limit %s""", (n,))
+            rows=cursor.fetchall()
+            if not rows:
+                cursor.close()
+                return []
+            cursor.executemany("update shedding_table set released=1 where shed_id=%s", [(r[0],) for r in rows]) #since we re-released them, ill set it back to 1 
+            db_connection.commit()
+            cursor.execute("select count(*) from shedding_table where released=0")
+            remaining=cursor.fetchone()[0]
+            cursor.close()
+            main_object.log.write(f"[bold blue][UNSHED] mode={speed} pulled {len(rows)} rows back | still on shed disk={remaining}[/bold blue]")
+            return [tuple(r[1:]) for r in rows] #drop shed_id so the tuple shape matches normal rows
+        except Exception as e:
+            db_connection.rollback()
+            main_object.log.write(f"Unshedding failed: {e}")
+            return []
+        
+        
     def summary(self):
         with self.cond:
             s=dict(self.stats)
@@ -143,6 +167,7 @@ def make_shedding_table(main_object):
         cursor=db_connection.cursor()
         cursor.execute(query)
         query="create table if not exists shedding_table (" \
+                "shed_id bigint auto_increment primary key, " \
                 "transaction_id varchar(255)," \
                 "customer_id varchar(255), " \
                 "product_id text, " \

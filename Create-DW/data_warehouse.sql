@@ -3,6 +3,7 @@
 use dw_retail_fatima;
 
 #drop tables and views in the start 
+drop view if exists STORE_QUARTERLY_SALES;
 drop table if exists fact_sales;
 drop table if exists dim_customer;
 drop table if exists dim_product;
