@@ -5,3 +5,7 @@ mysql
 mysql-connector-python
 threading
 datetime
+requests
+numpy
+os
+tqdm

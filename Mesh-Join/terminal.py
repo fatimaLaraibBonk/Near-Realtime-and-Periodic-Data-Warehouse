@@ -11,14 +11,33 @@
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Header, Footer, Static, Input, RichLog
-from textual import on
+from textual import on, work
 import main
 import threads
-
+import mesh_join_helpers
 #code
-class TerminalWindowApp(App):
 
-    #theme: pretty blue terminal with sky blue, royal blue and navy accents
+import queue
+
+class ThreadSafeLog:
+    def __init__(self, app, log):
+        self.app=app
+        self.log=log
+        self.q=queue.Queue()
+        self.app.set_interval(0.1, self.flush)
+
+    def write(self, *args, **kwargs):
+        self.q.put((args, kwargs))
+
+    def flush(self):
+        for _ in range(200):
+            try:
+                args, kwargs=self.q.get_nowait()
+            except queue.Empty:
+                break
+            self.log.write(*args, **kwargs)
+
+class TerminalWindowApp(App):
     CSS = """
     Screen {
         background: #e3f2fd;
@@ -95,21 +114,15 @@ class TerminalWindowApp(App):
     #db_host,
     #db_port,
     #db_username,
-    #db_password {
+    #db_password,
+    #db_name {
         display: None;
     }
     """
 
     #keyboard shortcuts
     BINDINGS=[
-        ("q", "quit", "quit data warehouse simulation"),
-        ("o", "online", "switch to online data alone"),
-        ("r", "periodic", "switch to periodic data alone"),
-        ("b", "both", "switch to using both data"),
-        ("p", "peak", "switch to peak"),
-        ("n", "non-peak", "switch to non-peak"),
-        ("s", "status", "view status"),
-        ("m", "change", "change rates")
+        ("q", "quit", "quit data warehouse simulation")
     ]
 
     def __init__(self):
@@ -118,14 +131,19 @@ class TerminalWindowApp(App):
         self.db_port=""
         self.db_username=""
         self.db_password=""
+        self.db_name=""
         self.link=""
         self.settings=None 
+        self.main_object=None
         #stats and things that we can change
         self.peak=80
         self.non_peak=10
         self.mode="both" #default online/periodic/both 
         self.speed="peak" #default peak/nonpeal
         self.rate=self.peak #whaterver rate to run 
+        self.stream_buff=None
+        self.h_count=0
+
     def compose(self)->ComposeResult:
         #yields widgets to build the layout components
         yield Header(show_clock=True)
@@ -157,6 +175,10 @@ class TerminalWindowApp(App):
                     id="db_password"
                 )
                 yield Input(
+                    placeholder="Enter database name...",
+                    id="db_name"
+                )
+                yield Input(
                     placeholder="Enter online data source URL...",
                     id="link",
                     disabled=True
@@ -173,13 +195,17 @@ class TerminalWindowApp(App):
         log=self.query_one("#console-log" , RichLog)
         log.write(f"[bold green]Near-Real Time and Periodic Data Warehouse.[/bold green].")
         log.write(f"[bold orange]Peak Rate=80 t/s, Non-Peak=10 t/s, 1 hour=60 secs.[/bold orange].")
+        log.write(f"[bold orange]Current mode: {self.mode} and {self.speed} [/bold orange].")
+        log.write(f"[bold orange]Stream buffer limit: 1000.[/bold orange].")
         log.write(f"[cyan]Enter the database credentials (DB name and Password): [/cyan]")
         for widget_id in [
             "#db_host",
             "#db_port",
             "#db_username",
-            "#db_password"
+            "#db_password",
+            "#db_name"
         ]:
+            
             self.query_one(widget_id).display = True
         self.query_one("#db_host").focus()
 
@@ -212,6 +238,13 @@ class TerminalWindowApp(App):
         self.db_password=event.value.strip()
         log=self.query_one("#console-log", RichLog)
         log.write("[cyan]Password received! [/cyan]")
+        self.query_one("#db_name").focus()
+
+    @on(Input.Submitted, "#db_name")
+    def db_name_submitted(self, event: Input.Submitted)->None:
+        self.db_name=event.value.strip()
+        log=self.query_one("#console-log", RichLog)
+        log.write("[cyan]Database name received! [/cyan]")
         log.write("[cyan]Enter the link please: [/cyan]")
         answer=self.query_one("#link", Input)
         answer.disabled=False
@@ -222,20 +255,37 @@ class TerminalWindowApp(App):
         self.link=event.value.strip()
         log=self.query_one("#console-log", RichLog)
         log.write("[cyan]Link received! [/cyan]")
-        main_object=main.clean_up_file(self.link, log, self.db_host, self.db_port, self.db_username, self.db_password)
-        log.write("[bold green]Setup Complete :) [/bold green]")
-        #after clean up boot up the threads
-        self.settings=main.start_etl(main_object, self.rate, self.mode, self.speed)
-        log.write("ETL started!")
+        self.query_one("#link", Input).disabled=True
+        self.run_setup(ThreadSafeLog(self, log))
+
+    @work(thread=True, exit_on_error=False)
+    def run_setup(self, log)->None:
+        import traceback
+        try:
+            log.write("[cyan]Setup thread started[/cyan]")
+            main_object=main.clean_up_file(self.link, log, self.db_host, self.db_port, self.db_username, self.db_password, self.db_name)
+            log.write("[bold green]Setup Complete :) [/bold green]")
+            #after clean up boot up the threads
+            self.settings=main.start_etl(main_object, self.rate, self.mode, self.speed)
+            self.main_object=main_object
+            log.write("ETL started!")
+            self.call_from_thread(self.finish_setup)
+        except Exception:
+            err=traceback.format_exc()
+            with open("error.txt", "w") as f:
+                f.write(err)
+            log.write("[bold red]ERROR:[/bold red] " + err.replace("[", "\\["))
+    def finish_setup(self)->None:
         terminal=self.query_one("#terminal-input", Input)
         terminal.disabled=False
         for widget_id in [
-            "#db_host",
-            "#db_port",
-            "#db_username",
-            "#db_password"
-        ]:
-            self.query_one(widget_id).display = False
+                "#db_host",
+                "#db_port",
+                "#db_username",
+                "#db_password",
+                "#db_name"
+            ]:
+                self.query_one(widget_id).display = False
         terminal.focus()
 
     @on(Input.Submitted, "#peak")
@@ -339,6 +389,12 @@ class TerminalWindowApp(App):
                 log.write(f"[black]• Non-peak: {self.non_peak}[/black]")
                 log.write(f"[black]• Mode: {self.mode}[/black]")
                 log.write(f"[black]• Speed: {self.speed}[/black]")
+                if self.settings and self.settings.stream_buff:
+                    sb=self.settings.stream_buff
+                    s=sb.summary()
+                    log.write(f"[black]• Stream buffer: {s['buffer']}/{sb.buffer_size} (online={s['n_online']}, periodic={s['buffer']-s['n_online']})[/black]")
+                    log.write(f"[black]• Transactions in H: {self.settings.h_count}[/black]")
+                    log.write(f"[black]• Still on shed disk: {mesh_join_helpers.count_shed(self.main_object)}[/black]")
             else:
                 log.write("Unknown command.")
 

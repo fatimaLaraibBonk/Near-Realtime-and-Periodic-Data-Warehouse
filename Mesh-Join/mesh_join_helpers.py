@@ -87,7 +87,7 @@ class stream_buffer:
                 #main_object.log.write(f"Shedding {len(shed_rows)} periodic rows")
                 #here we will then shed our stupid rows 
                 try:
-                    db_connection=connection.connect(main_object.host, main_object.username, main_object.password, "dw_retail_fatima", main_object.log)
+                    db_connection=connection.connect(main_object.host, main_object.port, main_object.username, main_object.password, main_object.name , main_object.log)
                     if db_connection.is_connected():
                         query="""
                             insert into shedding_table(
@@ -155,10 +155,13 @@ class stream_buffer:
             s["n_online"]=self.n_online
         return s
 
+
+#HOST, USER, PASSWORD, DATABASE, log
 def make_shedding_table(main_object):
     #makes the shedding table
     #HOST, USER, PASSWORD, DATABASE, log   
-    db_connection=connection.connect(main_object.host, main_object.username, main_object.password, "dw_retail_fatima", main_object.log)
+    #db_connection=connection.connect(host, port, username, password, database, log)
+    db_connection=connection.connect(main_object.host, main_object.port, main_object.username, main_object.password, main_object.name , main_object.log)
     if db_connection.is_connected():
         #if connected then we make the table 
         query="""
@@ -181,3 +184,14 @@ def make_shedding_table(main_object):
                 "shed_mode varchar(10))" #shed mode means was it shed during peak or non-peak 
         cursor.execute(query)
         connection.end_connection(db_connection, main_object.log, cursor)
+
+def count_shed(main_object):
+    try:
+        db_connection=connection.connect(main_object.host, main_object.port, main_object.username, main_object.password, main_object.name , main_object.log)
+        cursor=db_connection.cursor()
+        cursor.execute("select count(*) from shedding_table where released=0")
+        n=cursor.fetchone()[0]
+        connection.end_connection(db_connection, main_object.log, cursor)
+        return n
+    except Exception:
+        return "unavailable"

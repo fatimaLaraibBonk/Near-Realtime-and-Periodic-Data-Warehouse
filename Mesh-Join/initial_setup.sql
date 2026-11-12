@@ -28,3 +28,6 @@ select * from dim_product;
 select sales_mode, count(*) from fact_sales group by sales_mode;
 #total 397884
 select count(*) from fact_sales;
+
+#final shed counts
+select shed_mode, count(*) from shedding_table group by shed_mode;

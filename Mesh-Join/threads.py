@@ -25,7 +25,7 @@ class settings:
         self.rate=rate
         self.mode=mode
         self.speed=speed  #im only keeping this to strictly enforce the shedding and unshedding rules
-        self.hour=1 #meaning 1 hour is 60 seconds
+        self.hour=60 #meaning 1 hour is 60 seconds
         self.lock=threading.Lock()
         self.config_changed=threading.Event() #when we change the peak and nonpeak values
         self.stop_event=threading.Event()
@@ -68,7 +68,7 @@ class CSVReader:
 #peak and non-peak is used by online
 # online thread
 # now their job is to read the data and send it to mesh join which then enriches it
-def online_thread(Settings, main_object, stream_buff):
+def OnlineThread(Settings, main_object, stream_buff):
     reader=CSVReader("..\\Data\\online_sales_stream.csv")
     count_of_batches=0
     while not Settings.stop_event.is_set():
@@ -100,11 +100,11 @@ def online_thread(Settings, main_object, stream_buff):
 
 
 # periodic threads
-def periodic_thread(Settings, main_object, stream_buff):
+def PeriodicThread(Settings, main_object, stream_buff):
     #it sends the data every 60 seconds, i.e every hour
     release_hour=0 #so we start releasing from zero and make our way up
     #connection
-    db_connection=connection.connect(main_object.host, main_object.username, main_object.password, "dw_retail_fatima", main_object.log)
+    db_connection=connection.connect(main_object.host, main_object.port, main_object.username, main_object.password, main_object.name , main_object.log)
     if db_connection and db_connection.is_connected():
         main_object.log.write(f"[bold green]DB connection successful for periodic thread[/bold green]")
         cursor=db_connection.cursor()
@@ -165,13 +165,13 @@ def periodic_thread(Settings, main_object, stream_buff):
 #int(hashlib.md5(x.encode('utf-8')).hexdigest()[:8], 16) % 10
 #flow 
 #chunks->master data->consolidation->data warehouse 
-def meshjoin_thread(Settings, main_object, stream_buff):
+def MeshJoinThread(Settings, main_object, stream_buff):
     #this function removes from stream buff instead of adding into it 
     H=defaultdict(list) #hash tabel
     queue=deque()
     known={"cust":set(), "prod":set(), "time":set()} #keeping track of what ids we already know 
     periodic_hold=[] #finished periodic transactions waiting for the hourly load
-    db_connection=connection.connect(main_object.host, main_object.username, main_object.password, "dw_retail_fatima", main_object.log)
+    db_connection=connection.connect(main_object.host, main_object.port, main_object.username, main_object.password, main_object.name , main_object.log)
     if db_connection.is_connected():
         #tables
         query="select count(*) from customer_master_data"
@@ -184,7 +184,8 @@ def meshjoin_thread(Settings, main_object, stream_buff):
         customers_pages=math.ceil(count_customers/500)
         product_pages=math.ceil(count_product/500)
         N_ITER=max(customers_pages, product_pages)#max (customer, product_pages) 
-        stores=[("London Bridge" ,"London"),("Manchester Arndale", "Manchester"),("Birmingham Bullring", "Birmingham"),("Edinburgh Princes", "Edinburgh")]
+        main_object.log.write(f"[PAGES COUNT] Customer Pages: {customers_pages}, Product Pages: {product_pages}")
+        #stores=[("London Bridge" ,"London"),("Manchester Arndale", "Manchester"),("Birmingham Bullring", "Birmingham"),("Edinburgh Princes", "Edinburgh")]
         #we also need a queue 
         cust_page=0
         prod_page=0
@@ -205,15 +206,15 @@ def meshjoin_thread(Settings, main_object, stream_buff):
             #i was really confused by if u want or not want unshedding for peak or nah 
 
             spare=500-len(chunk)
-            if spare>0 and mode!="online": #periodic work is paused in online-only mode 
-                allowance=spare if speed=="non-peak" else spare//4 #non-peak drains at full rate, peak at a reduced rate
+            #if spare>0 and mode!="online": #periodic work is paused in online-only mode 
+                #allowance=spare if speed=="non-peak" else spare//4 #non-peak drains at full rate, peak at a reduced rate
                 #the //4 is only done to slow down the drain for the peak mode
                 #so for peak we only drain quarter 
                 #to completely stop shedding for peak 
-            #if spare>0 and mode!="online" and speed=="non-peak":
-                #chunk=chunk+stream_buff.read_shed_rows(db_connection, spare, main_object, speed)
-                if allowance>0:
-                    chunk=chunk+stream_buff.read_shed_rows(db_connection, allowance, main_object, speed)
+                #if allowance>0:
+                    #chunk=chunk+stream_buff.read_shed_rows(db_connection, allowance, main_object, speed)
+            if spare>0 and mode!="online" and speed=="non-peak":
+                chunk=chunk+stream_buff.read_shed_rows(db_connection, spare, main_object, speed)
 
 
             txns=[]
@@ -230,6 +231,7 @@ def meshjoin_thread(Settings, main_object, stream_buff):
                 queue.append({"rows":txns, "iters":0})
             #nothing in the stream and nothing in the queue, no point reading master data
             if not queue:
+                Settings.h_count=0
                 time.sleep(0.05)
                 continue
             #so to load these master tables we need the connection
@@ -287,6 +289,7 @@ def meshjoin_thread(Settings, main_object, stream_buff):
                 periodic_hold.extend(t for t in done["rows"] if t["row"][6]!="Online") #periodic waits for the hourly load
                 if online_rows:
                     consolidate(online_rows, db_connection, cursor, main_object, speed, known)
+            Settings.h_count=sum(len(c["rows"]) for c in queue)
             if not chunk:
                 time.sleep(0.05) #stream is empty but keep looping so old chunks can finish 
         #final flush so held periodic transactions are not lost on quit
@@ -371,9 +374,10 @@ def start_threads(settings, main_object):
     #making sure our shedding table is already prepared 
     mesh_join_helpers.make_shedding_table(main_object)
     stream_buff=mesh_join_helpers.stream_buffer()
-    t1=threading.Thread(target=online_thread, args=(settings, main_object, stream_buff), daemon=True)
-    t2=threading.Thread(target=periodic_thread, args=(settings, main_object, stream_buff), daemon=True)
-    t3=threading.Thread(target=meshjoin_thread, args=(settings, main_object, stream_buff), daemon=True)
+    settings.stream_buff=stream_buff
+    t1=threading.Thread(target=OnlineThread, args=(settings, main_object, stream_buff), daemon=True)
+    t2=threading.Thread(target=PeriodicThread, args=(settings, main_object, stream_buff), daemon=True)
+    t3=threading.Thread(target=MeshJoinThread, args=(settings, main_object, stream_buff), daemon=True)
     t1.start()
     t2.start()
     t3.start()

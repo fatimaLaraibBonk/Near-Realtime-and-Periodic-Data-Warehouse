@@ -2,10 +2,11 @@
 import mysql.connector 
 from mysql.connector import Error
 
-def connect(HOST, USER, PASSWORD, DATABASE, log):
+def connect(HOST, PORT, USER, PASSWORD, DATABASE, log):
     try:
         connection=mysql.connector.connect(
             host=HOST, 
+            port=int(PORT) if str(PORT).strip() else 3306,
             user=USER, 
             password=PASSWORD,
             database=DATABASE

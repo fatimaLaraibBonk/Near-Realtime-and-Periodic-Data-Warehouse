@@ -99,7 +99,7 @@ def cleanup(data, log):
 
 
 # separates data into periodic and online stream 
-def partition(data, log, host, port, username, password):
+def partition(data, log, host, port, name, username, password):
 
 
     data["sales_mode"] = data["transaction_id"].apply(
@@ -141,13 +141,18 @@ def partition(data, log, host, port, username, password):
         except Exception as e:
             log.write(f"[red]Group {i} encountered an exception {e} [/red]")
 
+    group_sizes = periodic_sales["release_hour"].value_counts().sort_index()
+    smallest=group_sizes.min()
+    largest=group_sizes.max()
+    log.write(f"smallest group: group {group_sizes.idxmin()} with {smallest} transactions")
+    log.write(f"largest group: group {group_sizes.idxmax()} with {largest} transactions")
     periodic_sales["released"]=0
     periodic_sales["customer_id"] = (
     periodic_sales["customer_id"].astype(str).str.replace(r"\.0$", "", regex=True))
     #basically my plan is that we make the database here 
     #add the necessary tables here 
-    database="dw_retail_fatima"
-    db_connection=connection.connect(host, username, password, database, log)
+    database=name
+    db_connection=connection.connect(host, port, username, password, database, log)
     if db_connection==0:
         log.write(f"[red]Could not connect to database")
         return -1
@@ -180,7 +185,7 @@ def partition(data, log, host, port, username, password):
 
     # staging table has a released flag so same group is NOT extracted twice 
     # and then we also have to flag each trasaction of this data as "Periodic"
-    db_connection=connection.connect(host, username, password, database, log)
+    db_connection=connection.connect(host, port, username, password, database, log)
     if db_connection.is_connected():
         full_data["customer_id"]=(full_data["customer_id"].astype(str).str.replace(r"\.0$", "", regex=True))
         customer_data=full_data[["customer_id", "country"]]
