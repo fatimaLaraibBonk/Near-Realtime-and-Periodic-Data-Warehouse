@@ -1,11 +1,8 @@
-textual
-pandas
-pathlib
-mysql
-mysql-connector-python
-threading
-datetime
-requests
-numpy
-os
-tqdm
+# python 3.10 or newer (built and tested on 3.13)
+# threading, datetime, pathlib, os, zipfile, hashlib, queue etc are built into python, no install needed
+
+pandas>=2.2.3              # cleaning and loading the data
+openpyxl>=3.1.2            # pandas needs this to read Online Retail.xlsx
+mysql-connector-python>=9.1.0  # connecting to the mysql dw
+requests>=2.31.0           # downloading the dataset from the uci link
+textual>=0.80.0            # the terminal ui

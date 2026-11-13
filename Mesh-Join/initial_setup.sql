@@ -1,4 +1,5 @@
 #we can run this before and after the work on periodic data and master data 
+#i made this file so that i can keep checking counts and it can be run over and over again without any issues 
 create database if not exists dw_retail_fatima;
 use dw_retail_fatima;
 
@@ -30,4 +31,16 @@ select sales_mode, count(*) from fact_sales group by sales_mode;
 select count(*) from fact_sales;
 
 #final shed counts
+select shed_mode,
+       count(*) as shed_rows,
+       count(distinct release_hour) as groups_affected,
+       round(count(*) / count(distinct release_hour)) as shed_per_group
+from shedding_table
+group by shed_mode;
+
+#final proof of everyhting
+select count(*) from fact_sales;                                  -- should equal to cleaned total
+select sales_mode, count(*) from fact_sales group by sales_mode; -- online + periodic
+select count(*) from shedding_table where released=0;             -- should be 0
+select count(*) from periodic_sales_data where released=0;        -- should be 0
 select shed_mode, count(*) from shedding_table group by shed_mode;

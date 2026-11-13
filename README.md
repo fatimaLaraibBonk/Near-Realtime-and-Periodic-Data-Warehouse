@@ -2,6 +2,11 @@
 
 - Note: I don't recommend downloading the file via the link, its very slow. There is downloaded file in the data, asnd it ensures smooother runs. 
 
+
+- Before running anything
+
+python -m pip install -r requirements.txt
+
 - Step by Step Instructions
 
 1. First go to the Mesh-Join folder and run the "initial_setup.sql" file. This creates the database with name "dw_retail_fatima"

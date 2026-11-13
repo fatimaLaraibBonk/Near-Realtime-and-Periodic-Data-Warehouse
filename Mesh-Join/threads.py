@@ -25,7 +25,7 @@ class settings:
         self.rate=rate
         self.mode=mode
         self.speed=speed  #im only keeping this to strictly enforce the shedding and unshedding rules
-        self.hour=60 #meaning 1 hour is 60 seconds
+        self.hour=1 #meaning 1 hour is 60 seconds
         self.lock=threading.Lock()
         self.config_changed=threading.Event() #when we change the peak and nonpeak values
         self.stop_event=threading.Event()
